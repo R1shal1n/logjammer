@@ -1,0 +1,266 @@
+"""Command-line interface for Log Jammer OSS."""
+
+import argparse
+import os
+from pathlib import Path
+import sys
+from typing import List, Optional
+
+try:
+  from logjammer.client import LogJammer
+  from logjammer.models import LogFormat
+  from logjammer.templates import replace_time_templates
+except ImportError:
+  from .client import LogJammer
+  from .models import LogFormat
+  from .templates import replace_time_templates
+
+
+def create_parser() -> argparse.ArgumentParser:
+  """Build the top-level argument parser."""
+  parser = argparse.ArgumentParser(
+      prog="logjammer",
+      description="AI-powered synthetic log generator for security testing and SIEM validation.",
+  )
+  parser.add_argument(
+      "--api-key",
+      help="Google Gemini API key (defaults to GEMINI_API_KEY environment variable)",
+  )
+  parser.add_argument(
+      "--gti-api-key",
+      help="Google Threat Intelligence API key (defaults to GTI_API_KEY environment variable)",
+  )
+  parser.add_argument(
+      "--model",
+      default="gemini-3.7-flash",
+      help="Gemini model to use (default: gemini-3.7-flash)",
+  )
+  parser.add_argument(
+      "--guides-dir",
+      help="Custom directory storing schema guides",
+  )
+
+  subparsers = parser.add_subparsers(dest="command", required=True)
+
+  # Command: learn
+  learn_p = subparsers.add_parser(
+      "learn",
+      help="Analyze sample logs to create a reusable schema playbook",
+  )
+  learn_p.add_argument(
+      "--type",
+      "-t",
+      required=True,
+      help="Log type identifier (e.g. OKTA, CS_EDR, MY_CUSTOM_APP)",
+  )
+  learn_p.add_argument(
+      "--sample",
+      "-s",
+      required=True,
+      type=Path,
+      help="Path to sample log file or directory of sample files (.json, .log, .raw, .csv)",
+  )
+  learn_p.add_argument(
+      "--output-dir",
+      "-o",
+      type=Path,
+      help="Directory to save the generated playbook",
+  )
+
+  # Command: generate
+  gen_p = subparsers.add_parser(
+      "generate",
+      help="Generate synthetic logs for a security scenario",
+  )
+  gen_p.add_argument(
+      "--scenario",
+      "-s",
+      required=True,
+      help="Natural language description of the attack or activity scenario",
+  )
+  gen_p.add_argument(
+      "--types",
+      "-t",
+      required=True,
+      help="Comma-separated log types to generate (e.g. OKTA,CS_EDR,WINEVTLOG)",
+  )
+  gen_p.add_argument(
+      "--enrich-gti",
+      "--gti",
+      action="store_true",
+      help="Enrich scenario using Google Threat Intelligence (GTI) Agent before generation",
+  )
+  gen_p.add_argument(
+      "--show-gti-enrichment",
+      action="store_true",
+      help="Display the enriched threat intelligence narrative in the terminal",
+  )
+  gen_p.add_argument(
+      "--output",
+      "-o",
+      help="Output file path (.jsonl, .log, .json) or destination URI (syslog://host:514, secops://CUSTOMER_ID, https://...)",
+  )
+  gen_p.add_argument(
+      "--project",
+      "-p",
+      help="Google Cloud Project ID or Project Number (for Google SecOps ingestion)",
+  )
+  gen_p.add_argument(
+      "--format",
+      choices=["auto", "jsonl", "raw", "json"],
+      default="auto",
+      help="Output formatting style (default: auto based on extension)",
+  )
+
+  # Command: list
+  subparsers.add_parser(
+      "list",
+      help="List all available learned log types",
+  )
+
+  # Command: show-guide
+  show_p = subparsers.add_parser(
+      "show-guide",
+      help="Display the schema guide for a specific log type",
+  )
+  show_p.add_argument(
+      "--type",
+      "-t",
+      required=True,
+      help="Log type identifier",
+  )
+
+  return parser
+
+
+def main(args: Optional[List[str]] = None) -> int:
+  """Main CLI execution routine."""
+  parser = create_parser()
+  parsed = parser.parse_args(args)
+
+  if not parsed.command:
+    parser.print_help()
+    return 0
+
+  try:
+    client = LogJammer(
+        api_key=parsed.api_key,
+        gti_api_key=getattr(parsed, "gti_api_key", None),
+        model=parsed.model,
+        guides_dir=parsed.guides_dir,
+    )
+  except Exception as e:
+    print(f"Configuration Error: {e}", file=sys.stderr)
+    return 1
+
+  if parsed.command == "learn":
+    if not parsed.sample.exists():
+      print(f"Error: Sample path '{parsed.sample}' does not exist.", file=sys.stderr)
+      return 1
+
+    target_type = "directory" if parsed.sample.is_dir() else "file"
+    print(f"Analyzing sample {target_type} '{parsed.sample}' for log type '{parsed.type}' with {parsed.model}...")
+    try:
+      result = client.learn(parsed.type, parsed.sample, output_dir=parsed.output_dir)
+      print("Successfully generated schema playbook!")
+      print(f"  - Log Type: {result.log_type}")
+      print(f"  - Files Analyzed: {result.files_analyzed}")
+      print(f"  - Total Lines Analyzed: {result.sample_count}")
+      print(f"  - Saved to: {result.guide_path}")
+      return 0
+    except Exception as e:
+      print(f"\n[Error] Failed to learn log schema:\n{e}", file=sys.stderr)
+      return 1
+
+  elif parsed.command == "generate":
+    log_types = [t.strip() for t in parsed.types.split(",") if t.strip()]
+    if not log_types:
+      print("Error: Please specify at least one log type via --types.", file=sys.stderr)
+      return 1
+
+    enrich_gti = getattr(parsed, "enrich_gti", False)
+    if enrich_gti:
+      print("[GTI Agent] Querying Google Threat Intelligence Agent for real-world threat model & indicators...")
+
+    print(f"Generating scenario with {len(log_types)} log source(s)...")
+    print(f"  Scenario: {parsed.scenario}")
+    print(f"  Log Types: {', '.join(log_types)}")
+
+    try:
+      scenario = client.generate(
+          scenario=parsed.scenario,
+          log_types=log_types,
+          enrich_gti=enrich_gti,
+      )
+
+      if scenario.enriched_narrative and getattr(parsed, "show_gti_enrichment", False):
+        print("\n" + "=" * 60)
+        print("GOOGLE THREAT INTELLIGENCE (GTI) ENRICHED SCENARIO")
+        print("=" * 60)
+        print(scenario.enriched_narrative)
+        print("=" * 60)
+
+      print(f"\nGenerated {scenario.total_log_count} total events across {len(scenario.logs)} log sources.")
+
+      if parsed.output:
+        count = client.export(scenario, parsed.output, project=parsed.project)
+        print(f"\nExported {count} logs to {parsed.output}")
+
+        if parsed.output.startswith(("secops://", "chronicle://")):
+          scenario_tag = (
+              os.environ.get("CHRONICLE_TAG")
+              or os.environ.get("CHRONICLE_SCENARIO_TAG")
+              or f"logjammer-{scenario.scenario_id[:8]}"
+          )
+          print("\n" + "=" * 60)
+          print("GOOGLE SECOPS (CHRONICLE) INGESTION DETAILS")
+          print("=" * 60)
+          print("Ingestion Labels Applied:")
+          print("  • SOURCE:        LOGJAMMER")
+          print(f"  • SCENARIO_ID:   {scenario.scenario_id[:8]}")
+          print(f"  • SCENARIO_TAG:  {scenario_tag}")
+          print("\nHow to Query in Google SecOps:")
+          print("  • UDM Search Filter:")
+          print(
+              '    metadata.ingestion_labels.key = "SCENARIO_ID" AND'
+              f' metadata.ingestion_labels.value = "{scenario.scenario_id[:8]}"'
+          )
+          print("  • Raw Log Search:")
+          print(f'    "{scenario.scenario_id[:8]}"')
+          print("=" * 60)
+      else:
+        # Print directly to stdout
+        for log_type, entries in scenario.logs.items():
+          print(f"\n--- {log_type} ({len(entries)} events) ---")
+          for entry in entries:
+            print(entry.content)
+      return 0
+    except Exception as e:
+      print(f"\n[Error] Failed to generate logs:\n{e}", file=sys.stderr)
+      return 1
+
+  elif parsed.command == "list":
+    types_list = client.list_log_types()
+    if not types_list:
+      print("No schema playbooks found.")
+      print("Use 'logjammer learn --type <NAME> --sample <FILE>' to analyze your first log sample.")
+    else:
+      print(f"Available Log Types ({len(types_list)}):")
+      for t in types_list:
+        print(f"  - {t}")
+    return 0
+
+  elif parsed.command == "show-guide":
+    guide = client.get_guide(parsed.type)
+    if not guide:
+      print(f"No schema guide found for log type '{parsed.type}'.", file=sys.stderr)
+      return 1
+    print(f"=== Schema Guide for {parsed.type} ===")
+    print(guide)
+    return 0
+
+  return 0
+
+
+if __name__ == "__main__":
+  sys.exit(main())

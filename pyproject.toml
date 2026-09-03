@@ -1,0 +1,50 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "logjammer"
+version = "0.1.0"
+description = "AI-powered synthetic log generator for security testing, detection engineering, and SIEM validation."
+readme = "README.md"
+license = "Apache-2.0"
+authors = [
+    { name = "Google Security Operations", email = "secops-tools@google.com" }
+]
+requires-python = ">=3.10"
+keywords = ["security", "siem", "chronicle", "synthetic-data", "logs", "gemini", "detection-engineering"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Information Technology",
+    "Intended Audience :: System Administrators",
+    "License :: OSI Approved :: Apache Software License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Security",
+]
+dependencies = [
+    "google-genai>=0.1.1",
+    "pydantic>=2.0.0",
+]
+
+[project.optional-dependencies]
+cli = [
+    "rich>=13.0.0",
+]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-mock>=3.10.0",
+    "pytest-cov>=4.0.0",
+]
+
+[project.scripts]
+logjammer = "logjammer.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/logjammer"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
