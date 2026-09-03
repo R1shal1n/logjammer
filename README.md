@@ -23,14 +23,9 @@ AI-Powered Synthetic Log Generator for Security Testing, Detection Engineering, 
 
 ## 📦 Installation
 
-### Option 1: Install via PyPI
+Install directly from GitHub:
 ```bash
-pip install logjammer
-```
-
-### Option 2: Install from Source (GitHub)
-```bash
-git clone https://github.com/your-org/logjammer.git
+git clone https://github.com/goog-cmmartin/logjammer.git
 cd logjammer
 pip install -r requirements.txt
 pip install -e .
