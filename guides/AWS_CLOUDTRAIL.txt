@@ -72,8 +72,8 @@ Identifies the principal requesting the action. Its internal schema changes base
 * **IAM User Principal ID**: `AIDA...` (e.g., `AIDAI4567EXAMPLE12345`)
 * **Role Principal ID**: `AROA...` (e.g., `AROATSOMMFOOHBV3O2BAR`)
 * **Assumed Role Principal ID Format**: `AROA...:<session-name>`
-* **Permanent Access Key**: `AKIA...` (e.g., `AKIAIOSFODNN7EXAMPLE`)
-* **Temporary Session Access Key**: `ASIA...` (e.g., `ASIATROMA2TRNSMNRMA3`)
+* **Permanent Access Key**: `AKIA...` (e.g., `AKIA0000000000EXAMPLE`)
+* **Temporary Session Access Key**: `ASIA...` (e.g., `ASIA0000000000EXAMPLE`)
 
 #### `sessionContext` Structure (Common in `AssumedRole` and `Root`):
 ```json
@@ -161,7 +161,7 @@ When generating synthetic data, insert dynamic timestamp placeholders:
       },
       "responseElements": {
         "credentials": {
-          "accessKeyId": "ASIA3XDYTGVBN7EXAMPLE",
+          "accessKeyId": "ASIA0000000000EXAMPLE",
           "expiration": "##$TimeStamp+0d0h57m50s$##",
           "sessionToken": "IQoJb3JpZ2luX2VjEOb//////////wEaCXVzLWVhc3QtMSJHMEUCIBnEXAMPLE"
         },
@@ -232,7 +232,7 @@ When generating synthetic data, insert dynamic timestamp placeholders:
         "principalId": "AIDAI4567TESTDEVUSER",
         "arn": "arn:aws:iam::123456789012:user/developer-contractor",
         "accountId": "123456789012",
-        "accessKeyId": "AKIAIOSFODNN7EXAMPLE",
+        "accessKeyId": "AKIA0000000000EXAMPLE",
         "userName": "developer-contractor"
       },
       "eventTime": "##$TimeStamp-0d0h18m30s$##",
@@ -271,7 +271,7 @@ When generating synthetic data, insert dynamic timestamp placeholders:
         "principalId": "AROAEXAMPLEADMINROLE:terraform-deployer",
         "arn": "arn:aws:sts::123456789012:assumed-role/TerraformExecutionRole/terraform-deployer",
         "accountId": "123456789012",
-        "accessKeyId": "ASIAEXAMPLEKEYID123",
+        "accessKeyId": "ASIA0000000000EXAMPLE",
         "sessionContext": {
           "sessionIssuer": {
             "type": "Role",
