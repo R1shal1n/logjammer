@@ -223,3 +223,97 @@ Generate the complete attack scenario logs as specified."""
         raw_response=raw_text,
         enriched_narrative=enriched_narrative,
     )
+
+  def infer_log_types(self, case_text: str) -> List[str]:
+    """Analyze a case report and infer the appropriate SIEM log types from available playbooks."""
+    available_types = self.playbook_service.list_available_log_types()
+    available_str = (
+        ", ".join(available_types)
+        if available_types
+        else "AWS_CLOUDTRAIL, AWS_VPC_FLOW, GUARDDUTY, OKTA, WINDOWS_SYSMON, GCP_CLOUDAUDIT"
+    )
+
+    prompt = f"""Given the following Security Case Report / Incident Alert Summary, identify the most relevant SIEM log types required to generate full surrounding telemetry (Pre-incident setup, Core alert events, and Post-incident outcome).
+
+Available Log Jammer Playbook Schemas:
+{available_str}
+
+Case Report:
+{case_text}
+
+Return a valid JSON array of 1 to 5 matching log type strings (e.g. ["AWS_CLOUDTRAIL", "AWS_VPC_FLOW"]).
+Return ONLY the JSON array."""
+
+    try:
+      from google.genai import types as genai_types
+      gen_config = genai_types.GenerateContentConfig(
+          response_mime_type="application/json",
+          temperature=0.2,
+      )
+      response = self.client.models.generate_content(
+          model=self.config.model,
+          contents=prompt,
+          config=gen_config,
+      )
+      data = json.loads(response.text)
+      if isinstance(data, list) and data:
+        return [str(x) for x in data]
+    except Exception:
+      pass
+
+    # Heuristic fallback matching keywords
+    text_lower = case_text.lower()
+    inferred = []
+    if any(k in text_lower for k in ("aws", "cloudtrail", "glue", "iam", "sts", "s3")):
+      inferred.append("AWS_CLOUDTRAIL")
+      if any(k in text_lower for k in ("ip", "network", "connection", "vpc", "flow")):
+        inferred.append("AWS_VPC_FLOW")
+    elif any(k in text_lower for k in ("gcp", "google", "bigquery")):
+      inferred.append("GCP_CLOUDAUDIT")
+    elif any(k in text_lower for k in ("azure", "entra")):
+      inferred.append("AZURE_ACTIVITY")
+    elif "slack" in text_lower:
+      inferred.append("SLACK_AUDIT")
+    elif "github" in text_lower:
+      inferred.append("GITHUB")
+
+    return inferred or ["AWS_CLOUDTRAIL"]
+
+  def generate_from_case(
+      self,
+      case_text: str,
+      log_types: Optional[List[str]] = None,
+      surround_before: str = "30m",
+      surround_after: str = "30m",
+      outcome: str = "benign",
+      base_time: Optional[datetime] = None,
+      custom_system_prompt: Optional[str] = None,
+      enrich_gti: bool = False,
+  ) -> GeneratedScenario:
+    """Generate a multi-stage surrounding log scenario from an input case report."""
+    if not log_types:
+      log_types = self.infer_log_types(case_text)
+
+    case_scenario_prompt = f"""### INPUT CASE REPORT / INCIDENT ALERT:
+{case_text}
+
+### SCENARIO GENERATION REQUIREMENTS:
+1. **Pre-Incident Phase (-{surround_before} before anchor timeline)**:
+   Generate initial authentication, network handshakes, STS session creation, API key lookups, or user activity leading up to the case events.
+2. **Core Incident Anchor Phase**:
+   Re-create the exact sequence of events detailed in the case report timeline.
+3. **Post-Incident Phase (+{surround_after} after anchor timeline)**:
+   Generate the outcome activity based on the specified verdict/outcome: '{outcome}'.
+   If benign: routine data verification, cleanup, session logout, or normal scheduled task completion.
+   If malicious: credential dumping, data exfiltration, lateral movement, or backdoor creation.
+4. **Entity Consistency**:
+   Re-use all exact IPs, usernames, role ARNs, session IDs, hostnames, and account IDs from the case report across all generated log types.
+"""
+    return self.generate(
+        scenario=case_scenario_prompt,
+        log_types=log_types,
+        base_time=base_time,
+        custom_system_prompt=custom_system_prompt,
+        enrich_gti=enrich_gti,
+    )
+

@@ -85,9 +85,39 @@ class LogJammer:
         custom_system_prompt=custom_system_prompt,
         enrich_gti=enrich_gti,
     )
+  def infer_log_types(self, case_text: str) -> List[str]:
+    """Analyze a case report and infer the appropriate SIEM log types."""
+    return self.generator.infer_log_types(case_text)
+
+  def generate_from_case(
+      self,
+      case_text: str,
+      log_types: Optional[List[str]] = None,
+      surround_before: str = "30m",
+      surround_after: str = "30m",
+      outcome: str = "benign",
+      base_time: Optional[datetime] = None,
+      custom_system_prompt: Optional[str] = None,
+      enrich_gti: bool = False,
+      save_to_cache: bool = True,
+  ) -> GeneratedScenario:
+    """Generate a multi-stage surrounding log scenario from an input case report."""
+    if not log_types:
+      log_types = self.infer_log_types(case_text)
+    sc_obj = self.generator.generate_from_case(
+        case_text=case_text,
+        log_types=log_types,
+        surround_before=surround_before,
+        surround_after=surround_after,
+        outcome=outcome,
+        base_time=base_time,
+        custom_system_prompt=custom_system_prompt,
+        enrich_gti=enrich_gti,
+    )
     if save_to_cache:
       self.scenario_service.save_scenario(sc_obj)
     return sc_obj
+
 
   def export(
       self,

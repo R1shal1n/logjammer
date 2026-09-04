@@ -75,14 +75,34 @@ def create_parser() -> argparse.ArgumentParser:
   gen_p.add_argument(
       "--scenario",
       "-s",
-      required=True,
       help="Natural language description of the attack or activity scenario",
   )
   gen_p.add_argument(
       "--types",
       "-t",
-      required=True,
-      help="Comma-separated log types to generate (e.g. OKTA,CS_EDR,WINEVTLOG)",
+      help="Comma-separated log types to generate (e.g. OKTA,CS_EDR,WINEVTLOG). Auto-inferred if omitted with --from-case",
+  )
+  gen_p.add_argument(
+      "--from-case",
+      "-c",
+      type=Path,
+      help="Path to a SOAR/SIEM case report or alert file (e.g. ~/case.txt) to expand with surrounding events",
+  )
+  gen_p.add_argument(
+      "--surround-before",
+      default="30m",
+      help="Time window before anchor event for pre-incident setup telemetry (default: 30m)",
+  )
+  gen_p.add_argument(
+      "--surround-after",
+      default="30m",
+      help="Time window after anchor event for post-incident follow-on telemetry (default: 30m)",
+  )
+  gen_p.add_argument(
+      "--outcome",
+      choices=["benign", "malicious"],
+      default="benign",
+      help="Post-incident outcome behavior (default: benign)",
   )
   gen_p.add_argument(
       "--enrich-gti",
@@ -246,25 +266,56 @@ def main(args: Optional[List[str]] = None) -> int:
       return 1
 
   elif parsed.command == "generate":
-    log_types = [t.strip() for t in parsed.types.split(",") if t.strip()]
-    if not log_types:
-      print("Error: Please specify at least one log type via --types.", file=sys.stderr)
+    if not parsed.scenario and not getattr(parsed, "from_case", None):
+      print("Error: Please provide either --scenario or --from-case.", file=sys.stderr)
       return 1
 
     enrich_gti = getattr(parsed, "enrich_gti", False)
     if enrich_gti:
       print("[GTI Agent] Querying Google Threat Intelligence Agent for real-world threat model & indicators...")
 
-    print(f"Generating scenario with {len(log_types)} log source(s)...")
-    print(f"  Scenario: {parsed.scenario}")
-    print(f"  Log Types: {', '.join(log_types)}")
-
     try:
-      scenario = client.generate(
-          scenario=parsed.scenario,
-          log_types=log_types,
-          enrich_gti=enrich_gti,
-      )
+      if getattr(parsed, "from_case", None):
+        case_file = Path(parsed.from_case).expanduser()
+        if not case_file.exists():
+          print(f"Error: Case file '{case_file}' does not exist.", file=sys.stderr)
+          return 1
+        case_text = case_file.read_text(encoding="utf-8")
+
+        if parsed.types:
+          log_types = [t.strip() for t in parsed.types.split(",") if t.strip()]
+        else:
+          print("Analyzing case report to infer required SIEM log types...")
+          log_types = client.infer_log_types(case_text)
+          print(f"  • Inferred Log Types: {', '.join(log_types)}")
+
+        print(f"Expanding case scenario from '{case_file}'...")
+        print(f"  • Pre-Incident Window:  -{parsed.surround_before}")
+        print(f"  • Post-Incident Window: +{parsed.surround_after}")
+        print(f"  • Post-Incident Outcome: {parsed.outcome}")
+
+        scenario = client.generate_from_case(
+            case_text=case_text,
+            log_types=log_types,
+            surround_before=parsed.surround_before,
+            surround_after=parsed.surround_after,
+            outcome=parsed.outcome,
+            enrich_gti=enrich_gti,
+        )
+      else:
+        if not parsed.types:
+          print("Error: Please specify at least one log type via --types.", file=sys.stderr)
+          return 1
+        log_types = [t.strip() for t in parsed.types.split(",") if t.strip()]
+        print(f"Generating scenario with {len(log_types)} log source(s)...")
+        print(f"  Scenario: {parsed.scenario}")
+        print(f"  Log Types: {', '.join(log_types)}")
+
+        scenario = client.generate(
+            scenario=parsed.scenario,
+            log_types=log_types,
+            enrich_gti=enrich_gti,
+        )
 
       if scenario.enriched_narrative and getattr(parsed, "show_gti_enrichment", False):
         print("\n" + "=" * 60)

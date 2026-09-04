@@ -137,6 +137,20 @@ logjammer replay \
   --scenario-name background_worker_replay
 ```
 
+### 7. Expand SOAR / SIEM Case Reports (`--from-case`)
+Feed a raw case report or SOAR alert summary (`~/case.txt`) into Log Jammer. Log Jammer automatically infers the required SIEM log types, pins core entities, and generates full pre-incident setup and post-incident outcome events:
+
+```bash
+# Expand case with auto-inferred log types and default 30m pre/post time windows
+logjammer generate \
+  --from-case ~/case.txt \
+  --surround-before 30m \
+  --surround-after 30m \
+  --outcome benign \
+  --output secops://YOUR_SECOPS_CUSTOMER_ID@us \
+  --project YOUR_GCP_PROJECT_ID
+```
+
 ---
 
 ## 📚 Schema Guides & Directory Organization
