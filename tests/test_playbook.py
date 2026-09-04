@@ -107,6 +107,44 @@ class PlaybookTest(unittest.TestCase):
       self.assertNotIn('data: "', prompt_passed)
       self.assertNotIn('\\"published\\"', prompt_passed)
 
+  def test_subdirectory_and_markdown_guides(self):
+    aws_dir = self.guides_dir / "AWS"
+    aws_dir.mkdir(parents=True)
+
+    ct_content = "**Official SecOps Log Type:** `AWS_CLOUDTRAIL`\n# CloudTrail Reference"
+    (aws_dir / "cloudtrail_log_format_reference.md").write_text(ct_content)
+    (aws_dir / "vpc_flow_logs_format_reference.md").write_text("# VPC Flow Reference")
+
+    service = PlaybookService(self.config)
+    available = service.list_available_log_types()
+
+    self.assertIn("AWS/cloudtrail_log_format_reference", available)
+    self.assertIn("AWS/vpc_flow_logs_format_reference", available)
+
+    # Retrieval via relative path
+    self.assertEqual(service.get_guide("AWS/cloudtrail_log_format_reference"), ct_content)
+    # Retrieval via Official SecOps Log Type
+    self.assertEqual(service.get_guide("AWS_CLOUDTRAIL"), ct_content)
+    # Retrieval via normalized alias
+    self.assertEqual(service.get_guide("CLOUDTRAIL"), ct_content)
+    # Retrieval for VPC Flow via normalized alias
+    self.assertEqual(service.get_guide("AWS_VPC_FLOW"), "# VPC Flow Reference")
+    self.assertEqual(service.get_guide("VPC_FLOW"), "# VPC Flow Reference")
+
+  def test_learn_with_subfolder(self):
+    with mock.patch(PATCH_TARGET) as mock_get_client:
+      mock_client = mock.MagicMock()
+      mock_response = mock.MagicMock()
+      mock_response.text = "# Custom AWS Service Guide"
+      mock_client.models.generate_content.return_value = mock_response
+      mock_get_client.return_value = mock_client
+
+      service = PlaybookService(self.config)
+      result = service.learn("AWS/CUSTOM_APP", '{"msg": "test"}')
+
+      self.assertTrue(result.guide_path.exists())
+      self.assertEqual(result.guide_path, self.guides_dir / "AWS" / "CUSTOM_APP.txt")
+
 
 if __name__ == "__main__":
   unittest.main()
