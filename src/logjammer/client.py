@@ -85,6 +85,42 @@ class LogJammer:
         custom_system_prompt=custom_system_prompt,
         enrich_gti=enrich_gti,
     )
+    if save_to_cache:
+      self.scenario_service.save_scenario(sc_obj)
+    return sc_obj
+
+  def validate_preflight(
+      self,
+      require_genai: bool = True,
+      require_gti: bool = False,
+      destination: Optional[Union[str, Path, BaseSink]] = None,
+      project: Optional[str] = None,
+  ) -> None:
+    """Pre-flight check required environment variables and credentials before execution."""
+    if require_genai:
+      if not self.config.api_key:
+        raise ValueError(
+            "[Pre-flight Validation Failed] Missing required environment variable GEMINI_API_KEY.\n"
+            "Please export a valid API key:\n"
+            "    export GEMINI_API_KEY=\"your_api_key_here\"\n"
+            "Get an API key at: https://aistudio.google.com/app/apikey"
+        )
+
+    if require_gti:
+      if not self.config.gti_api_key:
+        raise ValueError(
+            "[Pre-flight Validation Failed] Missing required environment variable GTI_API_KEY for threat intelligence enrichment.\n"
+            "Please export a valid GTI API key:\n"
+            "    export GTI_API_KEY=\"your_gti_api_key_here\""
+        )
+
+    if destination and isinstance(destination, str) and destination.startswith(("secops://", "chronicle://")):
+      from .sinks.secops import SecOpsSink
+      SecOpsSink.validate_preflight_destination(
+          destination=destination,
+          project=project,
+      )
+
   def infer_log_types(self, case_text: str) -> List[str]:
     """Analyze a case report and infer the appropriate SIEM log types."""
     return self.generator.infer_log_types(case_text)

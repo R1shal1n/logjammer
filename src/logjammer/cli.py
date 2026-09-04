@@ -251,6 +251,12 @@ def main(args: Optional[List[str]] = None) -> int:
       print(f"Error: Sample path '{parsed.sample}' does not exist.", file=sys.stderr)
       return 1
 
+    try:
+      client.validate_preflight(require_genai=True)
+    except ValueError as val_err:
+      print(f"\n[Error] {val_err}", file=sys.stderr)
+      return 1
+
     target_type = "directory" if parsed.sample.is_dir() else "file"
     print(f"Analyzing sample {target_type} '{parsed.sample}' for log type '{parsed.type}' with {parsed.model}...")
     try:
@@ -268,6 +274,17 @@ def main(args: Optional[List[str]] = None) -> int:
   elif parsed.command == "generate":
     if not parsed.scenario and not getattr(parsed, "from_case", None):
       print("Error: Please provide either --scenario or --from-case.", file=sys.stderr)
+      return 1
+
+    try:
+      client.validate_preflight(
+          require_genai=True,
+          require_gti=getattr(parsed, "enrich_gti", False),
+          destination=parsed.output,
+          project=parsed.project,
+      )
+    except ValueError as val_err:
+      print(f"\n[Error] {val_err}", file=sys.stderr)
       return 1
 
     enrich_gti = getattr(parsed, "enrich_gti", False)
@@ -396,6 +413,16 @@ def main(args: Optional[List[str]] = None) -> int:
       return 1
 
   elif parsed.command == "replay":
+    try:
+      client.validate_preflight(
+          require_genai=False,
+          destination=parsed.output,
+          project=parsed.project,
+      )
+    except ValueError as val_err:
+      print(f"\n[Error] {val_err}", file=sys.stderr)
+      return 1
+
     labels_dict = {}
     if getattr(parsed, "label", None):
       for item in parsed.label:

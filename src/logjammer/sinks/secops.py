@@ -39,12 +39,15 @@ class SecOpsSink(BaseSink):
       mode: str = "logs:import",  # 'logs:import' or 'events:import'
       labels: Optional[Dict[str, str]] = None,
   ):
-    self.customer_id = (
+    # Sanitize inputs (convert blank/whitespace strings to None)
+    cust = (
         customer_id
         or os.environ.get("CHRONICLE_CUSTOMER_ID")
         or os.environ.get("SECOPS_CUSTOMER_ID")
     )
-    self.project_number = (
+    self.customer_id = cust.strip() if cust and cust.strip() else None
+
+    proj = (
         project_number
         or os.environ.get("CHRONICLE_PROJECT_NUMBER")
         or os.environ.get("GCP_PROJECT_NUMBER")
@@ -52,17 +55,17 @@ class SecOpsSink(BaseSink):
         or os.environ.get("GOOGLE_CLOUD_PROJECT")
         or os.environ.get("GCP_PROJECT_ID")
     )
-    self.project_id = (
-        project_id
-        or os.environ.get("GOOGLE_CLOUD_PROJECT")
-        or os.environ.get("GCP_PROJECT_ID")
-    )
-    self.region = (region or os.environ.get("CHRONICLE_REGION", "us")).lower()
-    self.credentials_file = (
-        credentials_file or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
-    )
+    self.project_number = proj.strip() if proj and proj.strip() else None
+    self.project_id = self.project_number
+
+    reg = region or os.environ.get("CHRONICLE_REGION", "us")
+    self.region = reg.strip().lower() if reg and reg.strip() else "us"
+
+    cred = credentials_file or os.environ.get("GOOGLE_APPLICATION_CREDENTIALS")
+    self.credentials_file = cred.strip() if cred and cred.strip() else None
+
     self.batch_size = batch_size
-    self.tag = (
+    tg = (
         tag
         or scenario_tag
         or simulation_tag
@@ -72,7 +75,9 @@ class SecOpsSink(BaseSink):
         or os.environ.get("CHRONICLE_SIMULATION_TAG")
         or os.environ.get("CHRONICLE_SCENARIO_NAME")
     )
-    self.forwarder_id = forwarder_id or os.environ.get("CHRONICLE_FORWARDER_ID")
+    self.tag = tg.strip() if tg and tg.strip() else None
+    fw_id = forwarder_id or os.environ.get("CHRONICLE_FORWARDER_ID")
+    self.forwarder_id = fw_id.strip() if fw_id and fw_id.strip() else None
     self.mode = mode.lower()
     self.labels = labels or {}
     self.last_export_metadata: Dict[str, Any] = {}
@@ -93,11 +98,67 @@ class SecOpsSink(BaseSink):
       except Exception:
         pass
 
-    if not self.customer_id:
+    if not self.customer_id or self.customer_id == "YOUR_SECOPS_CUSTOMER_ID":
       raise ValueError(
-          "SecOpsSink requires 'customer_id' (or CHRONICLE_CUSTOMER_ID env"
-          " var)."
+          "[Pre-flight Validation Failed] SecOps destination requires a valid 'customer_id'.\n"
+          "Please specify secops://CUSTOMER_ID@REGION or export SECOPS_CUSTOMER_ID=\"your-uuid\""
       )
+
+    if not self.project_number or self.project_number == "YOUR_GCP_PROJECT_ID":
+      raise ValueError(
+          "[Pre-flight Validation Failed] Google SecOps ingestion requires a valid GCP Project ID or Number.\n"
+          "Please specify --project YOUR_PROJECT_ID or export GOOGLE_CLOUD_PROJECT=\"your-project-id\""
+      )
+
+  @staticmethod
+  def validate_preflight_destination(
+      destination: str,
+      project: Optional[str] = None,
+  ) -> None:
+    """Validate SecOps destination parameters and environment variables before starting tasks."""
+    uri_clean = destination.replace("secops://", "").replace("chronicle://", "").strip()
+    parts = uri_clean.split("@")
+    cust_id = parts[0].strip() if parts and parts[0].strip() else ""
+
+    cust_env = (
+        cust_id
+        or os.environ.get("CHRONICLE_CUSTOMER_ID")
+        or os.environ.get("SECOPS_CUSTOMER_ID")
+        or ""
+    ).strip()
+
+    proj_env = (
+        project
+        or os.environ.get("CHRONICLE_PROJECT_NUMBER")
+        or os.environ.get("GCP_PROJECT_NUMBER")
+        or os.environ.get("GOOGLE_CLOUD_PROJECT")
+        or os.environ.get("GCP_PROJECT_ID")
+        or ""
+    ).strip()
+
+    if not cust_env or cust_env == "YOUR_SECOPS_CUSTOMER_ID":
+      raise ValueError(
+          "[Pre-flight Validation Failed] Google SecOps destination requires a valid Customer ID.\n"
+          "Usage: secops://CUSTOMER_ID@REGION or export SECOPS_CUSTOMER_ID=\"your-uuid\""
+      )
+
+    if not proj_env or proj_env == "YOUR_GCP_PROJECT_ID":
+      import subprocess
+
+      try:
+        gcloud_proj = subprocess.check_output(
+            ["gcloud", "config", "get-value", "project"],
+            stderr=subprocess.DEVNULL,
+            text=True,
+        ).strip()
+        if not gcloud_proj or gcloud_proj == "(unset)":
+          raise ValueError()
+      except Exception:
+        raise ValueError(
+            "[Pre-flight Validation Failed] Google SecOps ingestion requires a Google Cloud Project ID.\n"
+            "Please specify --project YOUR_PROJECT_ID or export GOOGLE_CLOUD_PROJECT=\"your-project-id\""
+        )
+
 
   def _get_auth_token(self) -> str:
     """Retrieve Google OAuth2 access token via google-auth or gcloud CLI."""
