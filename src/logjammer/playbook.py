@@ -6,7 +6,7 @@ try:
 except ImportError:
   types = None
 
-from .config import LogJammerConfig, get_genai_client
+from .config import DEFAULT_GUIDES_DIR, LogJammerConfig, get_genai_client
 from .models import LearnResult
 
 
@@ -175,6 +175,7 @@ Generate the comprehensive AI log playbook guide for '{log_type}' following the 
     target_dir = output_dir or self.config.guides_dir
     target_dir.mkdir(parents=True, exist_ok=True)
     guide_path = target_dir / f"{log_type}.txt"
+    guide_path.parent.mkdir(parents=True, exist_ok=True)
 
     with open(guide_path, "w", encoding="utf-8") as f:
       f.write(guide_content)
@@ -187,18 +188,126 @@ Generate the comprehensive AI log playbook guide for '{log_type}' following the 
         files_analyzed=files_count,
     )
 
+  def _get_search_dirs(self, guides_dir: Optional[Path] = None) -> List[Path]:
+    """Resolve directories to search for schema playbooks."""
+    dirs: List[Path] = []
+    if guides_dir:
+      dirs.append(Path(guides_dir))
+    else:
+      dirs.append(self.config.guides_dir)
+      # If using default ~/.logjammer/guides, also look in repository/cwd guides/
+      if self.config.guides_dir == DEFAULT_GUIDES_DIR:
+        repo_guides = Path(__file__).resolve().parent.parent.parent / "guides"
+        cwd_guides = Path.cwd() / "guides"
+        for candidate in (cwd_guides, repo_guides):
+          if candidate.is_dir() and candidate not in dirs:
+            dirs.append(candidate)
+    return [d for d in dirs if d.exists()]
+
+  @staticmethod
+  def _normalize_key(name: str) -> str:
+    """Normalize identifier for flexible matching (e.g. AWS_CLOUDTRAIL -> cloudtrail)."""
+    s = name.lower().replace("-", "_").replace("/", "_").strip()
+    s = re.sub(r"(_format_reference|_reference|_playbook|_guide)$", "", s)
+    s = re.sub(r"(_(logs?|access_logs?|findings|syslog|dns))+$", "", s)
+    s = re.sub(r"^(aws_|amazon_)", "", s)
+    return s
+
+  def _get_aliases(self, f: Path, search_dir: Path, content_sample: str = "") -> set:
+    """Derive possible alias names for a guide file."""
+    aliases = set()
+    stem = f.stem.lower()
+    aliases.add(stem)
+
+    try:
+      rel_no_ext = f.relative_to(search_dir).with_suffix("").as_posix().lower()
+      aliases.add(rel_no_ext)
+      aliases.add(rel_no_ext.replace("/", "_"))
+    except ValueError:
+      pass
+
+    norm = self._normalize_key(f.stem)
+    aliases.add(norm)
+    aliases.add(f"aws_{norm}")
+    aliases.add(f"aws/{norm}")
+
+    secops_match = re.search(
+        r"Official SecOps Log Type:\s*`?([A-Za-z0-9_-]+)`?",
+        content_sample,
+        re.IGNORECASE,
+    )
+    if secops_match:
+      aliases.add(secops_match.group(1).lower())
+
+    return aliases
+
   def get_guide(self, log_type: str, guides_dir: Optional[Path] = None) -> Optional[str]:
-    """Retrieve the guide text for a specific log type."""
-    search_dir = guides_dir or self.config.guides_dir
-    guide_file = search_dir / f"{log_type}.txt"
-    if guide_file.exists():
-      with open(guide_file, "r", encoding="utf-8") as f:
-        return f.read()
+    """Retrieve the guide text for a specific log type, searching directories recursively."""
+    guide_extensions = (".txt", ".md", ".markdown")
+    search_dirs = self._get_search_dirs(guides_dir)
+    target_clean = log_type.strip()
+    norm_target = self._normalize_key(target_clean)
+
+    for search_dir in search_dirs:
+      # 1. Direct file match
+      for ext in guide_extensions:
+        direct = search_dir / f"{target_clean}{ext}"
+        if direct.is_file():
+          with open(direct, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read()
+
+      direct_path = search_dir / target_clean
+      if direct_path.is_file():
+        with open(direct_path, "r", encoding="utf-8", errors="ignore") as f:
+          return f.read()
+
+      # 2. Recursive search across all guide files in search_dir
+      candidates = [
+          p for p in search_dir.rglob("*")
+          if p.is_file() and p.suffix.lower() in guide_extensions
+      ]
+
+      # Exact stem or relative path match
+      for p in candidates:
+        rel_no_ext = p.relative_to(search_dir).with_suffix("").as_posix()
+        if (
+            p.stem.lower() == target_clean.lower()
+            or rel_no_ext.lower() == target_clean.lower()
+            or rel_no_ext.replace("/", "_").lower() == target_clean.lower()
+        ):
+          with open(p, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read()
+
+      # Alias or normalized match (e.g. AWS_CLOUDTRAIL, CLOUDTRAIL -> AWS/cloudtrail_log_format_reference.md)
+      for p in candidates:
+        try:
+          with open(p, "r", encoding="utf-8", errors="ignore") as f:
+            sample = f.read(500)
+        except Exception:
+          sample = ""
+
+        aliases = self._get_aliases(p, search_dir, sample)
+        if target_clean.lower() in aliases or norm_target in aliases:
+          with open(p, "r", encoding="utf-8", errors="ignore") as f:
+            return f.read()
+
     return None
 
   def list_available_log_types(self, guides_dir: Optional[Path] = None) -> List[str]:
-    """List all available log types that have guides."""
-    search_dir = guides_dir or self.config.guides_dir
-    if not search_dir.exists():
-      return []
-    return sorted(p.stem for p in search_dir.glob("*.txt"))
+    """List all available log types that have guides across directories."""
+    guide_extensions = (".txt", ".md", ".markdown")
+    search_dirs = self._get_search_dirs(guides_dir)
+    log_types = set()
+
+    for search_dir in search_dirs:
+      if not search_dir.exists():
+        continue
+      for p in search_dir.rglob("*"):
+        if p.is_file() and p.suffix.lower() in guide_extensions:
+          rel = p.relative_to(search_dir).with_suffix("")
+          if rel.parent == Path("."):
+            log_types.add(p.stem)
+          else:
+            log_types.add(rel.as_posix())
+
+    return sorted(log_types)
