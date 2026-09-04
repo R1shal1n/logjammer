@@ -101,12 +101,15 @@ logjammer generate \
   --types PAN_FIREWALL,APACHE \
   --output syslog://siem.corp.internal:514
 
-# Replay directly into Google SecOps (Chronicle) SIEM
+# Replay directly into Google SecOps (Chronicle) SIEM with custom scenario tags & labels
 logjammer generate \
   --scenario "Phishing email leading to credential dumping" \
   --types OFFICE_365,WINDOWS_SYSMON \
   --output secops://YOUR_SECOPS_CUSTOMER_ID@us \
-  --project YOUR_GCP_PROJECT_ID
+  --project YOUR_GCP_PROJECT_ID \
+  --scenario-name office_worker_simulation \
+  --label TEAM=blue_team \
+  --label ENVIRONMENT=staging
 ```
 
 ---
@@ -133,7 +136,13 @@ scenario = client.generate(
 )
 
 # 4. Export to file or SIEM (JSONL, Syslog, Webhook, SecOps)
-client.export(scenario, destination="secops://YOUR_SECOPS_CUSTOMER_ID@us", project="YOUR_GCP_PROJECT")
+client.export(
+    scenario,
+    destination="secops://YOUR_SECOPS_CUSTOMER_ID@us",
+    project="YOUR_GCP_PROJECT",
+    scenario_name="remote_worker_simulation",
+    labels={"TEAM": "red_team", "ENVIRONMENT": "lab"}
+)
 print(f"Generated and ingested {scenario.total_log_count} realistic events into Google SecOps!")
 ```
 

@@ -2,7 +2,7 @@
 
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Union
+from typing import Dict, List, Optional, Union
 
 from .config import LogJammerConfig
 from .generator import ScenarioGenerator
@@ -88,6 +88,9 @@ class LogJammer:
       scenario: GeneratedScenario,
       destination: Union[str, Path, BaseSink],
       project: Optional[str] = None,
+      tag: Optional[str] = None,
+      scenario_name: Optional[str] = None,
+      labels: Optional[Dict[str, str]] = None,
   ) -> int:
     """Export a generated scenario to a file, network syslog, or webhook."""
     if isinstance(destination, BaseSink):
@@ -103,7 +106,7 @@ class LogJammer:
       sink = SyslogSink(host=host, port=port)
       return sink.emit(scenario)
     elif dest_str.startswith(("secops://", "chronicle://")):
-      # Format: secops://[PROJECT:]CUSTOMER_ID[@REGION][?project=...&simulation_tag=...]
+      # Format: secops://[PROJECT:]CUSTOMER_ID[@REGION][?project=...&scenario_name=...]
       import urllib.parse
 
       parsed_url = urllib.parse.urlparse(dest_str)
@@ -113,10 +116,21 @@ class LogJammer:
       region = query_params.get("region", ["us"])[0]
       proj = query_params.get("project", [project])[0]
       tag_val = (
-          query_params.get("tag", [None])[0]
+          tag
+          or scenario_name
+          or query_params.get("tag", [None])[0]
           or query_params.get("scenario_tag", [None])[0]
           or query_params.get("simulation_tag", [None])[0]
+          or query_params.get("scenario_name", [None])[0]
       )
+
+      merged_labels = {}
+      for k, v in query_params.items():
+        if k.startswith("label."):
+          label_key = k[6:]
+          merged_labels[label_key] = v[0]
+      if labels:
+        merged_labels.update(labels)
 
       customer_id = target
       if "@" in target:
@@ -133,6 +147,7 @@ class LogJammer:
           project_number=proj,
           region=region,
           tag=tag_val,
+          labels=merged_labels,
       )
       return sink.emit(scenario)
     elif dest_str.startswith(("http://", "https://")):

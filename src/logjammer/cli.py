@@ -106,6 +106,19 @@ def create_parser() -> argparse.ArgumentParser:
       help="Google Cloud Project ID or Project Number (for Google SecOps ingestion)",
   )
   gen_p.add_argument(
+      "--scenario-name",
+      "--scenario-tag",
+      "--tag",
+      dest="scenario_name",
+      help="Custom tag or scenario name applied to metadata.ingestion_labels (SCENARIO_TAG)",
+  )
+  gen_p.add_argument(
+      "--label",
+      "-l",
+      action="append",
+      help="Custom key=value ingestion label pair (e.g., --label SCENARIO_NAME=office_worker)",
+  )
+  gen_p.add_argument(
       "--format",
       choices=["auto", "jsonl", "raw", "json"],
       default="auto",
@@ -203,13 +216,28 @@ def main(args: Optional[List[str]] = None) -> int:
       print(f"\nGenerated {scenario.total_log_count} total events across {len(scenario.logs)} log sources.")
 
       if parsed.output:
-        count = client.export(scenario, parsed.output, project=parsed.project)
+        labels_dict = {}
+        if getattr(parsed, "label", None):
+          for item in parsed.label:
+            if "=" in item:
+              k, v = item.split("=", 1)
+              labels_dict[k.strip()] = v.strip()
+
+        count = client.export(
+            scenario,
+            parsed.output,
+            project=parsed.project,
+            scenario_name=getattr(parsed, "scenario_name", None),
+            labels=labels_dict,
+        )
         print(f"\nExported {count} logs to {parsed.output}")
 
         if parsed.output.startswith(("secops://", "chronicle://")):
           scenario_tag = (
-              os.environ.get("CHRONICLE_TAG")
+              getattr(parsed, "scenario_name", None)
+              or os.environ.get("CHRONICLE_TAG")
               or os.environ.get("CHRONICLE_SCENARIO_TAG")
+              or os.environ.get("CHRONICLE_SCENARIO_NAME")
               or f"logjammer-{scenario.scenario_id[:8]}"
           )
           print("\n" + "=" * 60)
@@ -219,12 +247,27 @@ def main(args: Optional[List[str]] = None) -> int:
           print("  • SOURCE:        LOGJAMMER")
           print(f"  • SCENARIO_ID:   {scenario.scenario_id[:8]}")
           print(f"  • SCENARIO_TAG:  {scenario_tag}")
+          if labels_dict:
+            for lk, lv in labels_dict.items():
+              print(f"  • {lk}: {lv}")
           print("\nHow to Query in Google SecOps:")
-          print("  • UDM Search Filter:")
+          print("  • UDM Search Filter (by Scenario ID):")
           print(
               '    metadata.ingestion_labels.key = "SCENARIO_ID" AND'
               f' metadata.ingestion_labels.value = "{scenario.scenario_id[:8]}"'
           )
+          print("  • UDM Search Filter (by Scenario Tag / Name):")
+          print(
+              '    metadata.ingestion_labels.key = "SCENARIO_TAG" AND'
+              f' metadata.ingestion_labels.value = "{scenario_tag}"'
+          )
+          if labels_dict:
+            for lk, lv in labels_dict.items():
+              print(
+                  f'  • UDM Search Filter (by {lk}):\n'
+                  f'    metadata.ingestion_labels.key = "{lk}" AND'
+                  f' metadata.ingestion_labels.value = "{lv}"'
+              )
           print("  • Raw Log Search:")
           print(f'    "{scenario.scenario_id[:8]}"')
           print("=" * 60)

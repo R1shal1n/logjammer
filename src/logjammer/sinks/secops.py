@@ -34,6 +34,7 @@ class SecOpsSink(BaseSink):
       tag: Optional[str] = None,
       scenario_tag: Optional[str] = None,
       simulation_tag: Optional[str] = None,
+      scenario_name: Optional[str] = None,
       forwarder_id: Optional[str] = None,
       mode: str = "logs:import",  # 'logs:import' or 'events:import'
       labels: Optional[Dict[str, str]] = None,
@@ -65,9 +66,11 @@ class SecOpsSink(BaseSink):
         tag
         or scenario_tag
         or simulation_tag
+        or scenario_name
         or os.environ.get("CHRONICLE_TAG")
         or os.environ.get("CHRONICLE_SCENARIO_TAG")
         or os.environ.get("CHRONICLE_SIMULATION_TAG")
+        or os.environ.get("CHRONICLE_SCENARIO_NAME")
     )
     self.forwarder_id = forwarder_id or os.environ.get("CHRONICLE_FORWARDER_ID")
     self.mode = mode.lower()

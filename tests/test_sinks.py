@@ -150,6 +150,29 @@ class SinksTest(unittest.TestCase):
     self.assertEqual(len(events), 2)
     self.assertIn("udm", events[0])
 
+  @mock.patch("urllib.request.urlopen")
+  def test_secops_sink_custom_labels(self, mock_urlopen):
+    mock_resp = mock.MagicMock()
+    mock_resp.status = 200
+    mock_resp.__enter__.return_value = mock_resp
+    mock_urlopen.return_value = mock_resp
+
+    sink = SecOpsSink(
+        customer_id="12345678-abcd-ef01-2345-6789abcdef01",
+        project_number="288909297183",
+        scenario_name="office_worker_simulation",
+        labels={"ENVIRONMENT": "staging", "TEAM": "blue_team"},
+    )
+    with mock.patch.object(sink, "_get_auth_token", return_value="fake-token"):
+      count = sink.emit(self.scenario)
+
+    self.assertEqual(count, 2)
+    payload = json.loads(mock_urlopen.call_args[0][0].data.decode("utf-8"))
+    log_record = payload["inline_source"]["logs"][0]
+    self.assertEqual(log_record["labels"]["SCENARIO_TAG"]["value"], "office_worker_simulation")
+    self.assertEqual(log_record["labels"]["ENVIRONMENT"]["value"], "staging")
+    self.assertEqual(log_record["labels"]["TEAM"]["value"], "blue_team")
+
 
 if __name__ == "__main__":
   unittest.main()
