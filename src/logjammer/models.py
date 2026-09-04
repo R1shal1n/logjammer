@@ -37,6 +37,27 @@ class LogEntry:
         "metadata": self.metadata,
     }
 
+  @classmethod
+  def from_dict(cls, data: Dict[str, Any]) -> "LogEntry":
+    ts = None
+    if data.get("timestamp"):
+      try:
+        ts = datetime.fromisoformat(data["timestamp"])
+      except Exception:
+        ts = None
+    fmt_str = data.get("format", "raw")
+    try:
+      fmt = LogFormat(fmt_str)
+    except Exception:
+      fmt = LogFormat.RAW
+    return cls(
+        log_type=data.get("log_type", "UNKNOWN"),
+        content=data.get("content", ""),
+        format=fmt,
+        timestamp=ts,
+        metadata=data.get("metadata", {}),
+    )
+
 
 @dataclass
 class LogTypeGuide:
@@ -87,6 +108,39 @@ class GeneratedScenario:
 
   def to_json(self, indent: int = 2) -> str:
     return json.dumps(self.to_dict(), indent=indent)
+
+  @classmethod
+  def from_dict(cls, data: Dict[str, Any]) -> "GeneratedScenario":
+    logs_dict = {}
+    for log_type, entries_data in data.get("logs", {}).items():
+      logs_dict[log_type] = [LogEntry.from_dict(e) for e in entries_data]
+
+    created_at = datetime.now(timezone.utc)
+    if data.get("created_at"):
+      try:
+        created_at = datetime.fromisoformat(data["created_at"])
+      except Exception:
+        pass
+
+    return cls(
+        scenario_id=data.get("scenario_id", str(uuid.uuid4())),
+        title=data.get("title", "Synthetic Attack Scenario"),
+        description=data.get("description", ""),
+        created_at=created_at,
+        logs=logs_dict,
+        raw_response=data.get("raw_response"),
+        enriched_narrative=data.get("enriched_narrative"),
+    )
+
+  @classmethod
+  def from_json(cls, json_str: str) -> "GeneratedScenario":
+    return cls.from_dict(json.loads(json_str))
+
+  @classmethod
+  def from_file(cls, filepath: Any) -> "GeneratedScenario":
+    path = Path(filepath)
+    with open(path, "r", encoding="utf-8") as f:
+      return cls.from_json(f.read())
 
 
 @dataclass

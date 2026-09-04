@@ -143,6 +143,66 @@ def create_parser() -> argparse.ArgumentParser:
       help="Log type identifier",
   )
 
+  # Command: replay
+  replay_p = subparsers.add_parser(
+      "replay",
+      help="Replay a pre-generated scenario from local storage or JSON file without calling LLM",
+  )
+  replay_p.add_argument(
+      "--scenario",
+      "-s",
+      required=True,
+      help="Scenario ID prefix (e.g. 'a1b2c3d4') or path to scenario .json file",
+  )
+  replay_p.add_argument(
+      "--output",
+      "-o",
+      required=True,
+      help="Output file path (.jsonl, .log, .json) or destination URI (syslog://..., secops://...)",
+  )
+  replay_p.add_argument(
+      "--project",
+      "-p",
+      help="Google Cloud Project ID or Project Number (for Google SecOps ingestion)",
+  )
+  replay_p.add_argument(
+      "--scenario-name",
+      "--scenario-tag",
+      "--tag",
+      dest="scenario_name",
+      help="Custom tag or scenario name applied to metadata.ingestion_labels (SCENARIO_TAG)",
+  )
+  replay_p.add_argument(
+      "--label",
+      "-l",
+      action="append",
+      help="Custom key=value ingestion label pair (e.g. --label SCENARIO_NAME=office_worker)",
+  )
+
+  # Command: scenario / scenarios
+  for cmd_name in ("scenario", "scenarios"):
+    sc_p = subparsers.add_parser(
+        cmd_name,
+        help="Manage locally saved synthetic scenarios (list, show, save, delete)",
+    )
+    sc_sub = sc_p.add_subparsers(dest="scenario_action", required=False)
+
+    # scenario list
+    sc_sub.add_parser("list", help="List all saved scenarios in ~/.logjammer/scenarios/")
+
+    # scenario show
+    show_sc_p = sc_sub.add_parser("show", help="Display details of a saved scenario")
+    show_sc_p.add_argument("id", help="Scenario ID or prefix")
+
+    # scenario save
+    save_sc_p = sc_sub.add_parser("save", help="Save / export scenario JSON file")
+    save_sc_p.add_argument("id", help="Scenario ID or prefix")
+    save_sc_p.add_argument("--output", "-o", required=True, help="Destination filepath or directory")
+
+    # scenario delete
+    del_sc_p = sc_sub.add_parser("delete", help="Delete a scenario from local store")
+    del_sc_p.add_argument("id", help="Scenario ID or prefix")
+
   return parser
 
 
@@ -213,7 +273,9 @@ def main(args: Optional[List[str]] = None) -> int:
         print(scenario.enriched_narrative)
         print("=" * 60)
 
-      print(f"\nGenerated {scenario.total_log_count} total events across {len(scenario.logs)} log sources.")
+      sc_path = client.config.scenarios_dir / f"{scenario.scenario_id[:8]}.json"
+      print(f"Scenario saved to local store: {sc_path}")
+      print(f"Replay anytime without LLM: logjammer replay -s {scenario.scenario_id[:8]} -o <DESTINATION>")
 
       if parsed.output:
         labels_dict = {}
@@ -281,6 +343,95 @@ def main(args: Optional[List[str]] = None) -> int:
     except Exception as e:
       print(f"\n[Error] Failed to generate logs:\n{e}", file=sys.stderr)
       return 1
+
+  elif parsed.command == "replay":
+    labels_dict = {}
+    if getattr(parsed, "label", None):
+      for item in parsed.label:
+        if "=" in item:
+          k, v = item.split("=", 1)
+          labels_dict[k.strip()] = v.strip()
+
+    try:
+      sc = client.get_scenario(parsed.scenario)
+      if not sc:
+        print(f"[Error] Could not find saved scenario matching '{parsed.scenario}'.", file=sys.stderr)
+        print("Run 'logjammer scenario list' to view available saved scenarios.", file=sys.stderr)
+        return 1
+
+      print(f"Replaying Scenario [{sc.scenario_id[:8]}]: {sc.description}")
+      count = client.replay(
+          scenario=sc,
+          destination=parsed.output,
+          project=parsed.project,
+          scenario_name=getattr(parsed, "scenario_name", None),
+          labels=labels_dict,
+      )
+      print(f"Replayed {count} logs to {parsed.output} without LLM execution.")
+      return 0
+    except Exception as e:
+      print(f"\n[Error] Replay failed:\n{e}", file=sys.stderr)
+      return 1
+
+  elif parsed.command in ("scenario", "scenarios"):
+    action = getattr(parsed, "scenario_action", None) or "list"
+
+    if action == "list":
+      scenarios = client.list_scenarios()
+      if not scenarios:
+        print("No saved scenarios found.")
+        print("Generate your first scenario using 'logjammer generate -s ... -t ...'")
+      else:
+        print(f"Saved Scenarios ({len(scenarios)} in {client.config.scenarios_dir}):\n")
+        print(f"{'ID':<10} {'CREATED AT':<20} {'EVENTS':<8} {'DESCRIPTION'}")
+        print("-" * 75)
+        for s in scenarios:
+          created_str = s.created_at.strftime("%Y-%m-%d %H:%M:%S")
+          desc_short = (s.description[:35] + "...") if len(s.description) > 38 else s.description
+          print(f"{s.scenario_id[:8]:<10} {created_str:<20} {s.total_log_count:<8} {desc_short}")
+      return 0
+
+    elif action == "show":
+      sc = client.get_scenario(parsed.id)
+      if not sc:
+        print(f"[Error] Scenario '{parsed.id}' not found.", file=sys.stderr)
+        return 1
+      print("=" * 60)
+      print(f"SCENARIO DETAILS: {sc.scenario_id[:8]}")
+      print("=" * 60)
+      print(f"ID:          {sc.scenario_id}")
+      print(f"Created At:  {sc.created_at.isoformat()}")
+      print(f"Total Logs:  {sc.total_log_count}")
+      print(f"Description: {sc.description}")
+      if sc.enriched_narrative:
+        print("\nThreat Intelligence Narrative:")
+        print(sc.enriched_narrative)
+      print("\nLog Source Breakdown:")
+      for lt, entries in sc.logs.items():
+        print(f"  • {lt}: {len(entries)} events")
+      print("=" * 60)
+      return 0
+
+    elif action == "save":
+      sc = client.get_scenario(parsed.id)
+      if not sc:
+        print(f"[Error] Scenario '{parsed.id}' not found.", file=sys.stderr)
+        return 1
+      out_path = Path(parsed.output)
+      if out_path.is_dir():
+        out_path = out_path / f"{sc.scenario_id[:8]}.json"
+      saved_path = client.save_scenario(sc, filepath=out_path)
+      print(f"Saved scenario {sc.scenario_id[:8]} to {saved_path}")
+      return 0
+
+    elif action == "delete":
+      success = client.delete_scenario(parsed.id)
+      if success:
+        print(f"Deleted scenario '{parsed.id}'.")
+      else:
+        print(f"[Error] Could not find scenario '{parsed.id}' to delete.", file=sys.stderr)
+        return 1
+      return 0
 
   elif parsed.command == "list":
     types_list = client.list_log_types()

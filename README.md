@@ -112,6 +112,27 @@ logjammer generate \
   --label ENVIRONMENT=staging
 ```
 
+### 6. Local Scenario Storage & Instant Replay (No LLM Required)
+Every generated scenario is automatically stored locally in `~/.logjammer/scenarios/<ID>.json`. You can list, view, save, and instant-replay scenarios to SIEMs or files on demand **without consuming LLM tokens**:
+
+```bash
+# List all locally cached scenarios
+logjammer scenario list
+
+# Show details and log breakdown for a specific scenario
+logjammer scenario show a1b2c3d4
+
+# Export scenario JSON to a custom file or folder
+logjammer scenario save a1b2c3d4 -o ./my_scenario.json
+
+# Instant-replay scenario directly to Google SecOps or Syslog (0 LLM latency or token usage)
+logjammer replay \
+  -s a1b2c3d4 \
+  -o secops://YOUR_SECOPS_CUSTOMER_ID@us \
+  -p YOUR_GCP_PROJECT_ID \
+  --scenario-name background_worker_replay
+```
+
 ---
 
 ## 🐍 Python SDK Usage

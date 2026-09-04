@@ -8,6 +8,7 @@ from .config import LogJammerConfig
 from .generator import ScenarioGenerator
 from .models import GeneratedScenario, LearnResult
 from .playbook import PlaybookService
+from .scenario import ScenarioService
 from .sinks.base import BaseSink
 from .sinks.file import FileSink
 from .sinks.secops import SecOpsSink
@@ -51,6 +52,7 @@ class LogJammer:
 
     self.playbook_service = PlaybookService(self.config)
     self.generator = ScenarioGenerator(self.config, self.playbook_service)
+    self.scenario_service = ScenarioService(self.config)
 
   def learn(
       self,
@@ -73,15 +75,19 @@ class LogJammer:
       base_time: Optional[datetime] = None,
       custom_system_prompt: Optional[str] = None,
       enrich_gti: bool = False,
+      save_to_cache: bool = True,
   ) -> GeneratedScenario:
     """Generate multi-source synthetic logs matching the given scenario."""
-    return self.generator.generate(
+    sc_obj = self.generator.generate(
         scenario=scenario,
         log_types=log_types,
         base_time=base_time,
         custom_system_prompt=custom_system_prompt,
         enrich_gti=enrich_gti,
     )
+    if save_to_cache:
+      self.scenario_service.save_scenario(sc_obj)
+    return sc_obj
 
   def export(
       self,
@@ -164,3 +170,57 @@ class LogJammer:
   def get_guide(self, log_type: str) -> Optional[str]:
     """Retrieve schema guide text for a log type."""
     return self.playbook_service.get_guide(log_type)
+
+  def list_scenarios(self) -> List[GeneratedScenario]:
+    """List all locally saved/cached scenarios."""
+    return self.scenario_service.list_scenarios()
+
+  def get_scenario(self, identifier: str) -> Optional[GeneratedScenario]:
+    """Retrieve a scenario by file path, ID, or ID prefix."""
+    return self.scenario_service.get_scenario(identifier)
+
+  def save_scenario(
+      self,
+      scenario: GeneratedScenario,
+      filepath: Optional[Union[str, Path]] = None,
+  ) -> Path:
+    """Save a scenario to local cache or custom filepath."""
+    return self.scenario_service.save_scenario(scenario, filepath=filepath)
+
+  def delete_scenario(self, identifier: str) -> bool:
+    """Delete a cached scenario by ID or prefix."""
+    return self.scenario_service.delete_scenario(identifier)
+
+  def replay(
+      self,
+      scenario: Union[str, Path, GeneratedScenario],
+      destination: Union[str, Path, BaseSink],
+      base_time: Optional[datetime] = None,
+      project: Optional[str] = None,
+      tag: Optional[str] = None,
+      scenario_name: Optional[str] = None,
+      labels: Optional[Dict[str, str]] = None,
+  ) -> int:
+    """Replay a pre-generated scenario to a destination without calling the LLM."""
+    if isinstance(scenario, GeneratedScenario):
+      sc_obj = scenario
+    else:
+      sc_obj = self.get_scenario(str(scenario))
+
+    if not sc_obj:
+      raise ValueError(f"Scenario '{scenario}' not found.")
+
+    if base_time:
+      from .templates import replace_time_templates
+      for entries in sc_obj.logs.values():
+        for entry in entries:
+          entry.content = replace_time_templates(entry.content, base_time=base_time)
+
+    return self.export(
+        scenario=sc_obj,
+        destination=destination,
+        project=project,
+        tag=tag,
+        scenario_name=scenario_name,
+        labels=labels,
+    )

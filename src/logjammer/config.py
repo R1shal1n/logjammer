@@ -8,6 +8,7 @@ from typing import Optional
 
 DEFAULT_MODEL = "gemini-3.7-flash"
 DEFAULT_GUIDES_DIR = Path.home() / ".logjammer" / "guides"
+DEFAULT_SCENARIOS_DIR = Path.home() / ".logjammer" / "scenarios"
 
 
 @dataclass
@@ -21,6 +22,7 @@ class LogJammerConfig:
   top_p: float = 0.95
   thinking_budget: int = -1
   guides_dir: Path = field(default_factory=lambda: DEFAULT_GUIDES_DIR)
+  scenarios_dir: Path = field(default_factory=lambda: DEFAULT_SCENARIOS_DIR)
 
   def __post_init__(self):
     if not self.api_key:
@@ -41,8 +43,13 @@ class LogJammerConfig:
     if env_guides:
       self.guides_dir = Path(env_guides)
 
-    # Ensure guides directory exists
+    env_scenarios = os.environ.get("LOGJAMMER_SCENARIOS_DIR")
+    if env_scenarios:
+      self.scenarios_dir = Path(env_scenarios)
+
+    # Ensure guides and scenarios directories exist
     self.guides_dir.mkdir(parents=True, exist_ok=True)
+    self.scenarios_dir.mkdir(parents=True, exist_ok=True)
 
 
 def get_genai_client(config: Optional[LogJammerConfig] = None):
